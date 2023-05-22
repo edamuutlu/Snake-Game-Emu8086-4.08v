@@ -1,0 +1,296 @@
+org     100h
+
+; data bölümünü atla
+jmp     start
+
+; ------ data bölümü ------
+
+y_boyut  equ     7	; yılanın ilerlerkenki uzunluğu
+
+snake dw y_boyut dup(0)	; yılanın başlangıç boyutu kadar bellekte yer ayrılıyor
+
+kuyruk    dw      ?	; yılanın kuyruğuna ilk başta değer atanmıyor	
+
+; yön sabitleri
+sol    equ     4bh	; yön tuşlarının ascii kodları sembolik sabitler olarak tanımlanıyor
+sag    equ     4dh
+yukari equ     48h
+asagi  equ     50h
+
+; başlangıçtaki yılanın konumu:
+yon db      sag	; yon yılanın şu anki hareket yönünü tutar, ilk başta yılan sağa doğru hareket etmektedir
+
+bekleme_suresi dw    0	; yılanın hareketi arasındaki bekleme süresini tutar (?)
+
+; mesaj, bir dizi (db) ifadesi kullanılarak tanımlanır
+; her satır bir dizi byte'a karşılık gelir ve mesajdaki metni depolar
+; 0dh ve 0ah sırasıyla ascii tablosundaki \r ve \n karakterlerini temsil eder
+; 0dh ve 0ah birlikte kullanıldıklarında bir satırın sona erdiğini ve bir sonraki satıra geçtiğini belirtir
+msg 	db "__   _____ _        _    _   _ ", 0dh,0ah
+	db "\ \ / /_ _| |      / \  | \ | |", 0dh,0ah
+	db " \ V / | || |     / _ \ |  \| |", 0dh,0ah
+	db "  | |  | || |___ / ___ \| |\  |", 0dh,0ah
+	db "  |_| |___|_____/_/   \_\_| \_|", 0dh,0ah
+	db "                               ", 0dh,0ah
+	db "  _____   ___   _ _   _ _   _ ", 0dh,0ah	
+	db " / _ \ \ / / | | | \ | | | | |", 0dh,0ah
+	db "| | | \ V /| | | |  \| | | | |", 0dh,0ah
+	db "| |_| || | | |_| | |\  | |_| |", 0dh,0ah
+	db " \___/ |_|  \___/|_| \_|\___/ $"
+
+; ------ kod bölümü ------
+
+start:
+
+; karşılama mesajını yazdırma:
+mov dx, offset msg
+mov ah, 9	; MSDOS işletim sisteminin yazdırma dizesi işlevini belirtmektedir
+int 21h		; bu kesme çağrısı kullanılarak mesaj kutusu görüntülenmektedir    
+
+mov bp,3  	; hak sayısını tanımlanmakta ve ekrana yazdırmak üzere hak_yazdir fonksiyonu çağrılmaktadır
+call hak_yazdir
+
+
+; klavyeden bir tuş basımını bekleme:
+mov ah, 00h	; MSDOS'un klavye okuma işlevini belirtmektedir
+int 16h		; bu kesme çağrısı kullanılarak klavyeden bir tuş basımı beklenmektedir
+
+
+; metin imlecini saklama:
+mov     ah, 1	; MSDOS'un ekran karakterleri ve renkleri ayarlama işlevini belirtmektedir
+mov     ch, 2bh	; ch kaydedici, arka plan rengini belirlemektedir
+mov     cl, 0bh	; cl kaydedici, ön plan rengini belirlemektedir
+int     10h 	; bu kesme çağrısı ile arka ve ön plan rengi ayarlanmaktadır          
+
+
+game_loop:
+
+; === select first video page
+mov     al, 0  ; page number.
+mov     ah, 05h
+int     10h	; oyunun çalıştığı terminale video sayfasının atanmasını sağlamaktadır
+
+; yılanın yeni başını göster:
+mov     dx, snake[0]	; dx kaydedici yılanın başının bellekteki konumunu temsil etmektedir
+
+; metin imlecini yatay,dikey olacak şekilde dl,dh a ayarlama
+mov     ah, 02h		; imleç pozisyonunu ayarla işlevini belirtmektedir
+			; dl kaydedici, imlecin yatay konumunu; dh kaydedici imlecin dikey konumunu belirler
+int     10h		; bu kesme çağrısı kullanılarak, belirtilen koordinatlara imlecin taşınması sağlanmaktadır
+
+; yılanın gövdesini * karakteri ile oluşturma:
+mov     al, '*'	; al kaydedici yazdırılacak karakter olan * ile yüklenmektedir
+mov     ah, 09h ; tek karakter yazdırma işlevini belirtmektedir
+mov     bl, 0dh ; attribute.
+mov     cx, 1   ; cx kaydedici, yazdırılacak karakter sayısını(yani 1 adet olacağını) belirlemektedir
+int     10h	; yılanın başının ekranda gösterilmesini sağlamaktadır
+
+; bu kod bloğu, yılanın kuyruğunu hareket ettirmektedir
+mov     ax, snake[y_boyut * 2 - 2]  ; ax kaydedici, yılanın son elemanının bellekteki adresine karşılık gelen değer ile yüklenmektedir
+; yılanın her elemanı 2 byte yer kapladığından, bellekteki toplam byte sayısı: s_size * 2 
+mov     kuyruk, ax	
+; kuyruk değişkenine, ax atanır. Bu işlem, yılanın kuyruğunu hareket ettirirken son elemanı listeden çıkarıp yerine yeni eleman eklemeyi mümkün kılmaktadır
+
+call    move_snake	; yılanın tüm elemanlarını bir öne doğru hareket ettirilmesi için move_snake adlı alt program çağrılmaktadır
+
+
+; kuyruk değişkenindeki yılanın son elemanının bellekteki adresi, dx kaydedicisinde saklanılmaktadır
+mov     dx, kuyruk	
+
+; metin imlecini dl,dh'da ayarlama
+mov     ah, 02h		; imlecin pozisyonunu ayarlamak için kesme çağrısı kullanılmaktadır 
+int     10h
+
+; yılan ilerledikçe arkasını boş karaktere dönüştürme
+mov     al, ' '	; yılan ilerledikçe arkasının boş bir karaktere dönüşmesini sağlamaktadır
+mov     ah, 09h
+mov     bl, 0eh ; attribute.
+mov     cx, 1   ; single char.
+int     10h
+
+
+
+klavye_kontrol:
+mov     ah, 01h
+int     16h	; 16 interruptı klavyeden tuşa basılıp basılmadığını kontrol etmektedir
+jz      no_key	; jz bayrağı sıfır ise yani bir tuşa basılmadıysa no_key etiketine atlanmaktadır
+
+mov     ah, 00h	; eğer bir tuşa basıldıysa ah 00 olarak ayarlanı 16h interruptı çağrılmaktadır
+int     16h
+
+cmp     al, 1bh    ; esc(1bh) 
+je      stop_game  ; esc tuşu ise stop_game etiketine atlanmaktadır
+
+mov     yon, ah; esc tuşu değilse yon değişkeni klavyeden alınan ah ile güncellenip yılanın hareket yönü bu yöne göre ayarlanmaktadır
+
+
+no_key:    ; yeni bir tuşa basılmadığı sürece devam etme, bekleme etiketi
+; get number of clock ticks (about 18 per second) since midnight into cx:dx
+mov     ah, 00h
+int     1ah	; günün saatine göre bilgisayarın saatini okumaktadır
+cmp     dx, bekleme_suresi ; dx, saniyeyi tutar
+; beklenen süre, oyun döngüsünde klavyeden girdi almadan önce geçirilen süredir
+; dx değeri, bekleme_suresi değerinden küçük olduğu sürece (beklenen süre dolmadığı sürece) klavyeden tuş girişi beklenerek geçirilmektedir
+jb      klavye_kontrol
+add     dx, 4	
+mov     bekleme_suresi, dx  
+
+jmp     game_loop ; yılanın görüntüleneceği etikete atlar
+
+  
+; hak sayısını yazdırma	 
+hak_yazdir:   
+    ; hak sayısının ekranda yazdırılacağı konum belirlenmektedir
+    mov ah, 02h     ; konsol imleci konumunu ayarlamak için DOS hizmet çağrısı
+    mov bh, 0       ; sayfanın numarası
+    mov dh, 01     ; satır numarası
+    mov dl, 40      ; sütun numarası
+    int 10h         ; hizmet çağrısını çağır
+
+    ; bp registerı içindeki hak sayısı ekrana yazdırılmaktadır
+    mov ax, bp      ; bp registerındaki sayıyı ax kaydına kopyala
+    mov bx, 10      ; sayıyı onluk sistemde dönüştürmek için kullanılacak sabit
+    mov cx, 0       ; karakter sayacı
+    mov dx, 1000    ; bölünecek en büyük sayı
+    
+    ; sayıyı onluk sistemde karakter dizisine dönüştür
+    convert_digit:
+        xor dx, dx          ; dx kaydını sıfırla
+        div bx              ; ax kaydındaki sayıyı bx ile böl
+        add dl, '0'         ; kalanı ASCII karakterine dönüştür
+        push dx             ; karakteri yığının üstüne ekle
+        inc cx              ; karakter sayacını artır
+        cmp ax, 0           ; ax kaydındaki sayı 0 mı?
+        jne convert_digit   ; değilse tekrar dönüştür
+    
+    ; karakter dizisini konsola yazdır
+    print_string:
+        pop dx              ; yığının üstündeki karakteri al
+        mov ah, 02h         ; karakteri yazdırmak için DOS hizmet çağrısı
+        int 21h             ; konsola yazdır
+        loop print_string   ; tüm karakterleri yazdır  
+    ret
+
+; ------ fonksiyonlar bölümü ------
+
+; yılanın ilerleme mantığı: 
+; [kuyruğun son kısmı]-> silinir
+; [i. kısım] -> [i+1. kısım]
+
+stop_game:
+; esc tuşuna basılması durumunda çalışmaktadır
+; show cursor back:
+mov     ah, 1
+mov     ch, 0bh
+mov     cl, 0bh
+int     10h	; bu kod, alt programda imleci geri göstermek için kullanılmaktadır
+
+hlt	
+         
+         
+move_snake proc near    
+                              
+mov     ax, 40h
+mov     es, ax	; BIOS bilgi segmentinin yerini es registerında saklanılmasını sağlamaktadır
+
+  mov   di, y_boyut * 2 - 2	; di registerı kuyruğun son elemanının adresini göstermektedir
+  ; move all body parts
+  ; (last one simply goes away)
+  mov   cx, y_boyut-1
+move_array:
+  mov   ax, snake[di-2]
+  mov   snake[di], ax
+  sub   di, 2
+  loop  move_array
+
+
+cmp     yon, sol	; klavyeden sol yön tuşuna basıldıysa
+  je    sola_git
+cmp     yon, sag	; klavyeden sağ yön tuşuna basıldıysa
+  je    saga_git
+cmp     yon, yukari	; klavyeden yukarı yön tuşuna basıldıysa
+  je    yukari_git
+cmp     yon, asagi	; klavyeden aşağı yön tuşuna basıldıysa
+  je    asagi_git
+
+jmp     stop_move       ; yön belirlenmediyse hareketsiz kalmaktadır
+
+stop_game1:
+; esc tuşuna basılması durumunda çalışmaktadır
+; show cursor back:
+mov     ah, 1
+mov     ch, 0bh
+mov     cl, 0bh
+int     10h	; bu kod, alt programda imleci geri göstermek için kullanılmaktadır (?)
+
+hlt	; alt program ret komutu ile bitirilmektedir
+
+
+sola_git:
+  mov   al, b.snake[0]
+  dec   al
+  mov   b.snake[0], al
+  cmp   al, -1
+  jne   stop_move   	; al, -1 değilse stop_move etiketine atlanmaktadır   
+  dec bp     
+  call hak_yazdir
+  cmp bp,0	; bp yani hak sayısı 0 a eşitse
+  je  stop_game1
+  ; eğer b.snake[0] -1'e eşitse oyun alanının sol sınırını aştığı anlamına gelmektedir
+  ; bu durumda yılanın yeni konumu sağa taşınarak oyun alanına geri döndürülmektedir
+  mov   al, es:[4ah]    ; sütun numarası
+  dec   al		; es:[4ah] adresindeki değer yani ekranın genişliği 1 azaltılmaktadır
+  mov   b.snake[0], al  
+  jmp   stop_move   
+
+saga_git:
+  mov   al, b.snake[0]
+  inc   al
+  mov   b.snake[0], al
+  cmp   al, es:[4ah]    ; sütun numarası 
+  ; eğer sütun numarası daha büyükse oyun alanının sağ sınırına çarpılmıştır  
+  jb    stop_move	
+  mov   b.snake[0], 0   ; sola dön
+  ;
+  dec bp    
+  call hak_yazdir
+  cmp bp,0	; bp yani hak sayısı 0 a eşitse
+  je  stop_game1
+  ;
+  ; oyun alanının sağ sınırına çarpılmışsa yılanın başı oyun alanının sol sınırına döndürülür
+  jmp   stop_move 
+  
+yukari_git:
+  mov   al, b.snake[1]
+  dec   al
+  mov   b.snake[1], al
+  cmp   al, -1
+  jne   stop_move
+  ;
+  dec bp    
+  call hak_yazdir
+  cmp bp,0	; bp yani hak sayısı 0 a eşitse
+  je  stop_game1		
+  ;
+  mov   al, es:[84h]    ; satır numarası -1
+  mov   b.snake[1], al  ; aşağıya dön    
+  jmp   stop_move  
+
+asagi_git:
+  mov   al, b.snake[1]
+  inc   al
+  mov   b.snake[1], al
+  cmp   al, es:[84h]    ; satır numarası -1
+  jbe   stop_move	; Eğer birinci operand ikinci operanddan küçük veya eşitse 
+  ;
+  dec bp 
+  call hak_yazdir  
+  cmp bp,0	; bp yani hak sayısı 0 a eşitse
+  je  stop_game1	
+  ;
+  mov   b.snake[1], 0   ; yukarıya dön 
+  jmp   stop_move  
+
+stop_move:  
+  ret
+move_snake endp
